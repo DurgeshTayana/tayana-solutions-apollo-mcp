@@ -29,8 +29,8 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/apollo-mcp:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/apollo-mcp:${{ github.sha }}
+            ${{ secrets.DOCKER_USERNAME }}/apollo-mcp:latest
+            ${{ secrets.DOCKER_USERNAME }}/apollo-mcp:${{ github.sha }}
 
       # Optional: run tests using Node before deployment
       - name: Install deps & build (optional sanity check)
