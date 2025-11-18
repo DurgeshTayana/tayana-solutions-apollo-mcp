@@ -35,7 +35,7 @@ jobs:
       # Optional: run tests using Node before deployment
       - name: Install deps & build (optional sanity check)
         run: |
-          npm ci
+          npm install
           npm run build
 
       - name: Trigger DigitalOcean App deployment
