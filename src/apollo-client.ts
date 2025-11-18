@@ -126,6 +126,7 @@ export class ApolloClient {
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || process.env.APOLLO_IO_API_KEY || "";
+    console.log("apiKey", this.apiKey);
 
     if (!this.apiKey) {
       throw new Error("APOLLO_IO_API_KEY environment variable is required");
@@ -136,6 +137,7 @@ export class ApolloClient {
       "Content-Type": "application/json",
       "Cache-Control": "no-cache",
       "x-api-key": this.apiKey,
+      // "Authorization": `Bearer ${this.apiKey}`,
     };
 
     this.axiosInstance = axios.create({

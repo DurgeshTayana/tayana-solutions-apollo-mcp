@@ -26,16 +26,16 @@ npm install @agentx-ai/apollo-io-mcp-server
 
 ## Running the Server
 
-### Option 1: HTTP Server (Recommended for Local Development)
+### Option 1: HTTP Server (Recommended for Self-Hosting)
 
-Run the MCP server as an HTTP server on a local port:
+Run the MCP server as an HTTP server on a local port with support for dynamic API keys:
 
 ```bash
 # Install dependencies first
 npm install
 
-# Set your Apollo.io API key
-export APOLLO_IO_API_KEY=your_api_key_here
+# Optional: Set server authorization token (recommended for production)
+export SERVER_AUTH_TOKEN=your_server_auth_token_here
 
 # Run the HTTP server (default port: 3000)
 npm run start:http
@@ -48,9 +48,63 @@ npm run dev:http
 ```
 
 The server will start on `http://localhost:3000` (or your specified port) with the following endpoints:
+
+#### MCP Protocol Endpoints (SSE):
 - **SSE Endpoint**: `GET http://localhost:3000/mcp` - Establishes the SSE stream
 - **Messages Endpoint**: `POST http://localhost:3000/messages?sessionId=<session_id>` - Receives client JSON-RPC requests
-- **Health Check**: `GET http://localhost:3000/health` - Server health status
+
+#### REST API Endpoints (for n8n and HTTP clients):
+- **People Enrichment**: `POST /api/v1/people/enrichment`
+- **Organization Enrichment**: `GET /api/v1/organizations/enrichment?domain=<domain>`
+- **People Search**: `POST /api/v1/people/search`
+- **Organization Search**: `POST /api/v1/organizations/search`
+- **Organization Job Postings**: `GET /api/v1/organizations/:organizationId/jobs`
+- **Get Person Email**: `GET /api/v1/people/:apolloId/email`
+- **Employees of Company**: `POST /api/v1/companies/employees`
+
+#### Utility Endpoints:
+- **Health Check**: `GET /health` - Server health status
+- **API Documentation**: `GET /api` - API endpoint documentation
+
+### Authentication
+
+The server supports **dynamic Apollo.io API keys** sent by each client:
+
+**Required Headers (choose one):**
+- `X-Apollo-Api-Key: <your_apollo_api_key>`
+- `X-Api-Key: <your_apollo_api_key>`
+- `Authorization: Bearer <your_apollo_api_key>`
+
+**Optional Server Authorization** (if `SERVER_AUTH_TOKEN` is set):
+- `Authorization: Bearer <server_auth_token>` or
+- `X-Server-Token: <server_auth_token>`
+
+### Example Usage with n8n
+
+```bash
+# People Enrichment
+curl -X POST http://localhost:3000/api/v1/people/enrichment \
+  -H "X-Apollo-Api-Key: your_apollo_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "first_name": "John",
+    "last_name": "Doe",
+    "email": "john.doe@example.com"
+  }'
+
+# Organization Enrichment
+curl -X GET "http://localhost:3000/api/v1/organizations/enrichment?domain=apollo.io" \
+  -H "X-Apollo-Api-Key: your_apollo_api_key"
+
+# People Search
+curl -X POST http://localhost:3000/api/v1/people/search \
+  -H "X-Apollo-Api-Key: your_apollo_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "person_titles": ["Marketing Manager"],
+    "q_organization_domains_list": ["apollo.io"]
+  }'
+```
 
 ### Option 2: Stdio Server (For MCP Inspector)
 
@@ -190,3 +244,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 - [MCP Hub Website](https://www.agentx.so/mcp)
 - [More open sourced MCP Servers](https://github.com/AgentX-ai/AgentX-mcp-servers)
+
+
+
+<!-- https://tayana-solutions-apollo-mcp.onrender.com/mcp -->

@@ -20,18 +20,15 @@ const { values } = parseArgs({
   },
 });
 
-// Initialize Apollo.io client
-const apiKey = values["api-key"] || process.env.APOLLO_IO_API_KEY;
-if (!apiKey) {
-  throw new Error("APOLLO_IO_API_KEY environment variable is required");
-}
+// Initialize Apollo.io client (for stdio mode)
+const defaultApiKey = values["api-key"] || process.env.APOLLO_IO_API_KEY;
 
 export class ApolloServer {
   // Core server properties
   private server: Server;
   private apollo: ApolloClient;
 
-  constructor() {
+  constructor(apiKey?: string) {
     this.server = new Server(
       {
         name: "apollo-io-manager",
@@ -45,7 +42,13 @@ export class ApolloServer {
       }
     );
 
-    this.apollo = new ApolloClient(apiKey);
+    // Use provided API key, fallback to default, or throw error if neither exists
+    const finalApiKey = apiKey || defaultApiKey;
+    if (!finalApiKey) {
+      throw new Error("APOLLO_IO_API_KEY must be provided via constructor, environment variable, or command line argument");
+    }
+
+    this.apollo = new ApolloClient(finalApiKey);
 
     this.setupToolHandlers();
     this.setupErrorHandling();
@@ -77,7 +80,7 @@ export class ApolloServer {
         {
           name: "people_enrichment",
           description:
-            "Use the People Enrichment endpoint to enrich data for 1 person, at least one parameter is required.",
+            "Use the People Enrichment tool to enrich data for 1 person, at least one parameter is required.",
           inputSchema: {
             type: "object",
             properties: {
@@ -645,5 +648,9 @@ export class ApolloServer {
 
   getServer(): Server {
     return this.server;
+  }
+
+  getApolloClient(): ApolloClient {
+    return this.apollo;
   }
 }
