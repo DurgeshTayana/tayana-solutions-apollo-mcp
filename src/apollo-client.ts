@@ -4,8 +4,8 @@ import dotenv from "dotenv";
 // Load environment variables
 dotenv.config();
 
-// Helper function to strip URL
-const stripUrl = (url?: string): string | undefined => {
+// Helper function to strip URL and extract domain
+export const stripUrl = (url?: string): string | undefined => {
   if (!url) return undefined;
 
   try {
@@ -15,8 +15,11 @@ const stripUrl = (url?: string): string | undefined => {
     // Remove www.
     stripped = stripped.replace(/^www\./, "");
 
-    // Remove trailing slash
-    stripped = stripped.replace(/\/$/, "");
+    // Remove trailing slash and path
+    stripped = stripped.split('/')[0];
+
+    // Remove port if present
+    stripped = stripped.split(':')[0];
 
     // Convert to lowercase
     stripped = stripped.toLowerCase();

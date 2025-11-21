@@ -6,7 +6,7 @@ import {
   McpError,
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { ApolloClient } from "./apollo-client.js";
+import { ApolloClient, stripUrl } from "./apollo-client.js";
 import dotenv from "dotenv";
 import { parseArgs } from "node:util";
 
@@ -73,10 +73,74 @@ export class ApolloServer {
     });
   }
 
-  private setupToolHandlers(): void {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      // Define available tools
-      const tools: Tool[] = [
+  /**
+   * Get the list of available tools
+   * This method can be called to get tools without going through the MCP protocol
+   */
+  getTools(): Tool[] {
+    return this.getToolsList();
+  }
+
+  /**
+   * Call a tool directly (for HTTP/REST API usage)
+   */
+  async callTool(toolName: string, arguments_: any): Promise<any> {
+    const args = arguments_ ?? {};
+
+    switch (toolName) {
+      case "people_enrichment": {
+        return await this.apollo.peopleEnrichment(args);
+      }
+
+      case "organization_enrichment": {
+        // Extract domain from URL if provided, otherwise use domain directly
+        let domain: string;
+        if (args.url) {
+          const extractedDomain = stripUrl(args.url as string);
+          if (!extractedDomain) {
+            throw new Error("Invalid URL provided. Could not extract domain.");
+          }
+          domain = extractedDomain;
+        } else if (args.domain) {
+          domain = args.domain as string;
+        } else {
+          throw new Error("Either 'domain' or 'url' parameter is required");
+        }
+        
+        return await this.apollo.organizationEnrichment(domain);
+      }
+
+      case "people_search": {
+        return await this.apollo.peopleSearch(args);
+      }
+
+      case "organization_search": {
+        return await this.apollo.organizationSearch(args);
+      }
+
+      case "organization_job_postings": {
+        return await this.apollo.organizationJobPostings(args.organization_id as string);
+      }
+
+      case "get_person_email": {
+        return await this.apollo.getPersonEmail(args.apollo_id as string);
+      }
+
+      case "employees_of_company": {
+        return await this.apollo.employeesOfCompany(args as any);
+      }
+
+      default:
+        throw new Error(`Unknown tool: ${toolName}`);
+    }
+  }
+
+  /**
+   * Internal method to get the tools list
+   */
+  private getToolsList(): Tool[] {
+    // Define available tools
+    const tools: Tool[] = [
         {
           name: "people_enrichment",
           description:
@@ -114,17 +178,25 @@ export class ApolloServer {
         {
           name: "organization_enrichment",
           description:
-            "Use the Organization Enrichment endpoint to enrich data for 1 company",
+            "Use the Organization Enrichment endpoint to enrich data for 1 company. You can provide either a domain (e.g., 'apollo.io') or a URL (e.g., 'https://www.apollo.io'). If a URL is provided, the domain will be automatically extracted.",
           inputSchema: {
             type: "object",
             properties: {
               domain: {
                 type: "string",
                 description:
-                  "The domain of the company that you want to enrich. Do not include www., the @ symbol, or similar (e.g., 'apollo.io' or 'microsoft.com')",
+                  "The domain of the company that you want to enrich. Do not include www., the @ symbol, or similar (e.g., 'apollo.io' or 'microsoft.com'). If you provide a URL, the domain will be extracted automatically.",
+              },
+              url: {
+                type: "string",
+                description:
+                  "The website URL of the company (e.g., 'https://www.apollo.io' or 'http://microsoft.com'). The domain will be automatically extracted from the URL.",
               },
             },
-            required: ["domain"],
+            anyOf: [
+              { required: ["domain"] },
+              { required: ["url"] }
+            ],
           },
         },
         {
@@ -520,8 +592,14 @@ export class ApolloServer {
             required: ["company"],
           },
         },
-      ];
+    ];
 
+    return tools;
+  }
+
+  private setupToolHandlers(): void {
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      const tools = this.getToolsList();
       return { tools };
     });
 
@@ -543,9 +621,21 @@ export class ApolloServer {
           }
 
           case "organization_enrichment": {
-            const result = await this.apollo.organizationEnrichment(
-              args.domain as string
-            );
+            // Extract domain from URL if provided, otherwise use domain directly
+            let domain: string;
+            if (args.url) {
+              const extractedDomain = stripUrl(args.url as string);
+              if (!extractedDomain) {
+                throw new Error("Invalid URL provided. Could not extract domain.");
+              }
+              domain = extractedDomain;
+            } else if (args.domain) {
+              domain = args.domain as string;
+            } else {
+              throw new Error("Either 'domain' or 'url' parameter is required");
+            }
+            
+            const result = await this.apollo.organizationEnrichment(domain);
             return {
               content: [
                 {

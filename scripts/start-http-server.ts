@@ -4,7 +4,7 @@
 import express from 'express';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { ApolloServer } from '../src/apollo-server.js';
-import { ApolloClient } from '../src/apollo-client.js';
+import { ApolloClient, stripUrl } from '../src/apollo-client.js';
 import dotenv from 'dotenv';
 
 // Load environment variables
@@ -20,7 +20,7 @@ const transports: Record<string, SSEServerTransport> = {};
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 // Optional server authorization token (for protecting the server itself)
-const SERVER_AUTH_TOKEN = process.env.SERVER_AUTH_TOKEN;
+const SERVER_AUTH_TOKEN = process.env.APOLLO_IO_API_KEY;
 
 /**
  * Extract Apollo.io API key from multiple possible header locations
@@ -79,7 +79,16 @@ const apolloApiKeyMiddleware = (
   next: express.NextFunction
 ): void => {
   const apiKey = extractApolloApiKey(req);
-
+  console.log('apiKey', apiKey);
+  console.log('req.headers', req.headers);
+  console.log('req.body', req.body);
+  console.log('req.query', req.query);
+  console.log('req.params', req.params);
+  console.log('req.method', req.method);
+  console.log('req.url', req.url);
+  console.log('req.path', req.path);
+  console.log('req.protocol', req.protocol);
+  console.log('req.hostname', req.hostname);
   if (!apiKey) {
     res.status(401).json({
       error: 'Missing Apollo.io API key',
@@ -129,8 +138,9 @@ const serverAuthMiddleware = (
 
   // Validate token
   if (!token || token !== SERVER_AUTH_TOKEN) {
+    console.log("Invalid or missing server authorization token");
     res.status(401).json({
-      error: 'Unauthorized',
+      error: 'Unauthorized token available',
       message: 'Invalid or missing server authorization token',
       hint: 'Provide token via Authorization: Bearer <token> or X-Server-Token header'
     });
@@ -140,8 +150,188 @@ const serverAuthMiddleware = (
   next();
 };
 
-// SSE endpoint for establishing the stream
-app.get('/mcp',serverAuthMiddleware,apolloApiKeyMiddleware, async (req, res) => {
+// Helper function to handle a single JSON-RPC request
+async function handleJsonRpcRequest(request: any, apiKey?: string): Promise<any> {
+  const requestId = request.id !== undefined ? request.id : null;
+  const method = request.method;
+  
+  console.log(`JSON-RPC request - Method: ${method}, ID: ${requestId}`);
+  
+  if (method === 'tools/list') {
+    // Create server instance (API key optional, uses env var if not provided)
+    const server = new ApolloServer(apiKey);
+    const tools = server.getTools();
+    
+    // Return JSON-RPC response
+    return {
+      jsonrpc: '2.0',
+      id: requestId,
+      result: {
+        tools: tools
+      }
+    };
+  } else if (method === 'tools/call') {
+    // Handle tool call request
+    const toolName = request.params?.name;
+    const toolArgs = request.params?.arguments || {};
+    
+    if (!toolName) {
+      return {
+        jsonrpc: '2.0',
+        id: requestId,
+        error: {
+          code: -32602,
+          message: 'Invalid params: tool name is required'
+        }
+      };
+    }
+    
+    try {
+      const server = new ApolloServer(apiKey);
+      const result = await server.callTool(toolName, toolArgs);
+      
+      return {
+        jsonrpc: '2.0',
+        id: requestId,
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2)
+            }
+          ]
+        }
+      };
+    } catch (error: any) {
+      console.error(`Error executing tool ${toolName}:`, error);
+      return {
+        jsonrpc: '2.0',
+        id: requestId,
+        error: {
+          code: -32000,
+          message: `Tool execution failed: ${error.message}`,
+          data: error.message
+        }
+      };
+    }
+  } else if (method === 'initialize') {
+    // Handle initialize request
+    return {
+      jsonrpc: '2.0',
+      id: requestId,
+      result: {
+        protocolVersion: '2024-11-05',
+        capabilities: {
+          tools: {}
+        },
+        serverInfo: {
+          name: 'apollo-io-manager',
+          version: '1.0.0'
+        }
+      }
+    };
+  } else {
+    // Unknown method
+    return {
+      jsonrpc: '2.0',
+      id: requestId,
+      error: {
+        code: -32601,
+        message: `Method not found: ${method}`
+      }
+    };
+  }
+}
+
+// POST endpoint for getting tools list (RESTful API and MCP JSON-RPC)
+// Supports both n8n MCP client (JSON-RPC) and simple REST requests
+// Also supports HTTP streamable transport
+app.post('/mcp', async (req, res) => {
+  console.log('Received POST request to /mcp');
+  console.log('Request body:', JSON.stringify(req.body, null, 2));
+  console.log('Request headers:', req.headers);
+  
+  // Set proper headers for HTTP streaming
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  
+  try {
+    // Extract API key (optional - will use env var if not provided)
+    const apiKey = extractApolloApiKey(req) || process.env.APOLLO_IO_API_KEY || undefined;
+    
+    // Check if this is a JSON-RPC request (from n8n MCP client)
+    // Support both single request and batch requests (array)
+    const isJsonRpc = req.body && typeof req.body === 'object' && 
+                     ('jsonrpc' in req.body || 'method' in req.body);
+    const isBatch = Array.isArray(req.body) && req.body.length > 0 && 
+                    req.body.some((item: any) => item && typeof item === 'object' && ('jsonrpc' in item || 'method' in item));
+    
+    if (isJsonRpc || isBatch) {
+      // Handle JSON-RPC request(s) from n8n MCP client
+      if (isBatch) {
+        // Handle batch request (array of JSON-RPC requests)
+        console.log(`Processing batch request with ${req.body.length} requests`);
+        const responses = await Promise.all(
+          req.body.map((request: any) => handleJsonRpcRequest(request, apiKey))
+        );
+        // Filter out notifications (requests without id)
+        const filteredResponses = responses.filter((response: any) => response.id !== null);
+        return res.json(filteredResponses.length > 0 ? filteredResponses : null);
+      } else {
+        // Handle single JSON-RPC request
+        const response = await handleJsonRpcRequest(req.body, apiKey);
+        
+        // Don't send response for notifications (requests without id)
+        if (response.id !== null) {
+          console.log(`Returning JSON-RPC response for method: ${req.body.method}`);
+          return res.json(response);
+        } else {
+          // Notification - no response needed
+          return res.status(204).send();
+        }
+      }
+    } else {
+      // Handle simple REST request (non-JSON-RPC)
+      const server = new ApolloServer(apiKey);
+      const tools = server.getTools();
+      
+      console.log(`Returning ${tools.length} tools via REST API`);
+      return res.json({
+        tools: tools,
+        count: tools.length
+      });
+    }
+  } catch (error: any) {
+    console.error('Error in /mcp endpoint:', error);
+    
+    // Check if this was a JSON-RPC request
+    const isJsonRpc = req.body && typeof req.body === 'object' && 
+                     ('jsonrpc' in req.body || 'method' in req.body);
+    const isBatch = Array.isArray(req.body);
+    
+    if (isJsonRpc || isBatch) {
+      const requestId = isBatch ? null : (req.body?.id !== undefined ? req.body.id : null);
+      return res.status(500).json({
+        jsonrpc: '2.0',
+        id: requestId,
+        error: {
+          code: -32000,
+          message: 'Server error',
+          data: error.message
+        }
+      });
+    } else {
+      return res.status(500).json({ 
+        error: 'Failed to get tools list',
+        message: error.message 
+      });
+    }
+  }
+});
+
+// GET endpoint for establishing SSE stream
+app.get('/mcp', async (req, res) => {
   console.log('Received GET request to /mcp (establishing SSE stream)');
   try {
     const apiKey = (req as any).apolloApiKey;
@@ -162,6 +352,7 @@ app.get('/mcp',serverAuthMiddleware,apolloApiKeyMiddleware, async (req, res) => 
     // Connect the transport to the MCP server
     const server = new ApolloServer(apiKey);
     await server.connect(transport);
+    res.status(200).send('SSE stream established');
     console.log(`Established SSE stream with session ID: ${sessionId}`);
   } catch (error) {
     console.error('Error establishing SSE stream:', error);
@@ -252,15 +443,30 @@ app.post('/api/v1/people/enrichment', serverAuthMiddleware, apolloApiKeyMiddlewa
 });
 
 // Organization Enrichment endpoint
+// Supports both domain and URL parameters
 app.get('/api/v1/organizations/enrichment', serverAuthMiddleware, apolloApiKeyMiddleware, async (req, res) => {
   try {
     const apiKey = (req as any).apolloApiKey;
-    const domain = req.query.domain as string;
+    const domainParam = req.query.domain as string;
+    const urlParam = req.query.url as string;
     
-    if (!domain) {
+    // Extract domain from URL if provided, otherwise use domain directly
+    let domain: string;
+    if (urlParam) {
+      const extractedDomain = stripUrl(urlParam);
+      if (!extractedDomain) {
+        return res.status(400).json({
+          error: 'Bad Request',
+          message: 'Invalid URL provided. Could not extract domain.'
+        });
+      }
+      domain = extractedDomain;
+    } else if (domainParam) {
+      domain = domainParam;
+    } else {
       return res.status(400).json({
         error: 'Bad Request',
-        message: 'Missing required parameter: domain'
+        message: 'Missing required parameter: domain or url'
       });
     }
     
@@ -402,12 +608,13 @@ app.get('/api', (req, res) => {
     endpoints: {
       health: 'GET /health',
       mcp: {
-        sse: 'GET /mcp',
-        messages: 'POST /messages?sessionId=<session_id>'
+        tools: 'POST /mcp - Get list of available tools',
+        sse: 'GET /mcp - Establish SSE stream',
+        messages: 'POST /messages?sessionId=<session_id> - Send JSON-RPC messages'
       },
       rest: {
         peopleEnrichment: 'POST /api/v1/people/enrichment',
-        organizationEnrichment: 'GET /api/v1/organizations/enrichment?domain=<domain>',
+        organizationEnrichment: 'GET /api/v1/organizations/enrichment?domain=<domain> or ?url=<url>',
         peopleSearch: 'POST /api/v1/people/search',
         organizationSearch: 'POST /api/v1/organizations/search',
         organizationJobPostings: 'GET /api/v1/organizations/:organizationId/jobs',
@@ -425,13 +632,16 @@ app.get('/api', (req, res) => {
 // Start the server
 app.listen(PORT, () => {
   console.log(`Apollo.io MCP Server (HTTP/SSE) listening on port ${PORT}`);
-  console.log(`SSE endpoint: http://localhost:${PORT}/mcp`);
-  console.log(`Messages endpoint: http://localhost:${PORT}/messages`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`API Documentation: http://localhost:${PORT}/api`);
+  console.log(`\nMCP Protocol Endpoints:`);
+  console.log(`  POST   /mcp - Get list of available tools`);
+  console.log(`  GET    /mcp - Establish SSE stream`);
+  console.log(`  POST   /messages?sessionId=<session_id> - Send JSON-RPC messages`);
+  console.log(`\nUtility Endpoints:`);
+  console.log(`  GET    /health - Health check`);
+  console.log(`  GET    /api - API documentation`);
   console.log(`\nREST API Endpoints:`);
   console.log(`  POST   /api/v1/people/enrichment`);
-  console.log(`  GET    /api/v1/organizations/enrichment?domain=<domain>`);
+  console.log(`  GET    /api/v1/organizations/enrichment?domain=<domain> or ?url=<url>`);
   console.log(`  POST   /api/v1/people/search`);
   console.log(`  POST   /api/v1/organizations/search`);
   console.log(`  GET    /api/v1/organizations/:organizationId/jobs`);
