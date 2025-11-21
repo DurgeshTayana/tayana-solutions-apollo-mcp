@@ -25,10 +25,10 @@ RUN npm i --omit=dev
 COPY --from=builder /app/dist ./dist
 
 # Expose port
-EXPOSE 3000
+EXPOSE 5001
 
 # Set default port via environment variable (can be overridden)
-ENV PORT=3000
+ENV PORT=5001
 
 # Run the HTTP server
 CMD ["node", "dist/scripts/start-http-server.js"]
